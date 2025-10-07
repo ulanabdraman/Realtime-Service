@@ -1,7 +1,7 @@
 package config
 
 import (
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/spf13/viper"
@@ -9,6 +9,7 @@ import (
 
 type Config struct {
 	AppPort      string
+	AppHost      string
 	KafkaTopic   string
 	KafkaGroup   string
 	KafkaBrokers []string
@@ -24,6 +25,7 @@ func Load() *Config {
 
 	// Значения по умолчанию
 	viper.SetDefault("AppPort", "8080")
+	viper.SetDefault("AppHost", "localhost")
 	viper.SetDefault("KafkaTopic", "realtime")
 	viper.SetDefault("KafkaGroup", "realtime-consumer")
 	viper.SetDefault("KafkaBrokers", []string{"localhost:9092"})
@@ -32,11 +34,14 @@ func Load() *Config {
 	viper.SetDefault("WriteTimeout", "15s")
 
 	if err := viper.ReadInConfig(); err != nil {
-		log.Printf("No config file found, using defaults")
+		slog.Warn("No config file found, using defaults", slog.String("error", err.Error()))
+	} else {
+		slog.Info("Config file loaded", slog.String("path", viper.ConfigFileUsed()))
 	}
 
-	return &Config{
+	cfg := &Config{
 		AppPort:      viper.GetString("AppPort"),
+		AppHost:      viper.GetString("AppHost"),
 		KafkaTopic:   viper.GetString("KafkaTopic"),
 		KafkaGroup:   viper.GetString("KafkaGroup"),
 		KafkaBrokers: viper.GetStringSlice("KafkaBrokers"),
@@ -44,4 +49,16 @@ func Load() *Config {
 		ReadTimeout:  viper.GetDuration("ReadTimeout"),
 		WriteTimeout: viper.GetDuration("WriteTimeout"),
 	}
+
+	slog.Info("Config loaded",
+		slog.String("app_host", cfg.AppHost),
+		slog.String("app_port", cfg.AppPort),
+		slog.String("kafka_topic", cfg.KafkaTopic),
+		slog.String("kafka_group", cfg.KafkaGroup),
+		slog.Any("kafka_brokers", cfg.KafkaBrokers),
+		slog.Duration("read_timeout", cfg.ReadTimeout),
+		slog.Duration("write_timeout", cfg.WriteTimeout),
+	)
+
+	return cfg
 }

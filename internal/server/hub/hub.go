@@ -1,26 +1,31 @@
 package hub
 
 import (
-	"RealtimeService/internal/domains/connection/model" // ты потом подставишь свой путь
+	"RealtimeService/internal/domains/connection/model"
 	"context"
 	"github.com/gorilla/websocket"
-	"log"
+	"log/slog"
 	"sync"
 )
 
 type Hub struct {
-	mu sync.RWMutex
-	// unitID → соединения
+	mu          sync.RWMutex
 	subscribers map[int]map[*websocket.Conn]struct{}
+	logger      *slog.Logger
 }
 
 func New() *Hub {
+	logger := slog.With(
+		slog.String("object", "server"),
+		slog.String("layer", "Hub"),
+	)
+
 	return &Hub{
 		subscribers: make(map[int]map[*websocket.Conn]struct{}),
+		logger:      logger,
 	}
 }
 
-// Subscribe добавляет conn ко всем нужным unitID
 func (h *Hub) Subscribe(conn *websocket.Conn, unitIDs []int) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -31,24 +36,28 @@ func (h *Hub) Subscribe(conn *websocket.Conn, unitIDs []int) {
 		}
 		h.subscribers[id][conn] = struct{}{}
 	}
+
+	h.logger.Info("Subscribed connection", slog.Any("unit_ids", unitIDs))
 }
 
-// Unsubscribe удаляет conn из всех подписок
 func (h *Hub) Unsubscribe(conn *websocket.Conn) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
+	removed := 0
 	for unitID, conns := range h.subscribers {
 		if _, ok := conns[conn]; ok {
 			delete(conns, conn)
+			removed++
 			if len(conns) == 0 {
 				delete(h.subscribers, unitID)
 			}
 		}
 	}
+
+	h.logger.Info("Unsubscribed connection", slog.Int("removed_from_units", removed))
 }
 
-// Broadcast рассылает сообщение всем, кто подписан на unitID
 func (h *Hub) Broadcast(unitID int, data model.Data) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
@@ -59,23 +68,25 @@ func (h *Hub) Broadcast(unitID int, data model.Data) {
 	}
 
 	for conn := range conns {
-		err := conn.WriteJSON(data)
-		if err != nil {
-			log.Printf("hub: ошибка отправки: %v", err)
+		if err := conn.WriteJSON(data); err != nil {
+			h.logger.Error("Failed to send data", slog.Int("unit_id", unitID), slog.String("error", err.Error()))
 			conn.Close()
 		}
 	}
 }
 
-// Optional: Graceful shutdown
 func (h *Hub) Shutdown(ctx context.Context) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
+	count := 0
 	for _, conns := range h.subscribers {
 		for conn := range conns {
 			conn.Close()
+			count++
 		}
 	}
 	h.subscribers = make(map[int]map[*websocket.Conn]struct{})
+
+	h.logger.Info("Hub shutdown completed", slog.Int("connections_closed", count))
 }

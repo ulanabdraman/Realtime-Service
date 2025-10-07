@@ -3,19 +3,30 @@ package repository
 import (
 	"RealtimeService/internal/domains/connection/model"
 	"context"
+	"log/slog"
 )
 
 type RedisRepository interface {
 	GetLastData(ctx context.Context, unitIDs []int) ([]model.Data, error)
 }
 
-type redisRepository struct{}
+type redisRepository struct {
+	logger *slog.Logger
+}
 
 func NewRedisRepository() RedisRepository {
-	return &redisRepository{}
+	logger := slog.With(
+		slog.String("object", "connection"),
+		slog.String("layer", "RedisRepository"),
+	)
+	return &redisRepository{logger: logger}
 }
 
 func (r *redisRepository) GetLastData(ctx context.Context, unitIDs []int) ([]model.Data, error) {
+	r.logger.Info("GetLastData called", slog.Int("unit_count", len(unitIDs)))
+
+	r.logger.Debug("Fetching last data for unitIDs", slog.Any("unit_ids", unitIDs))
+
 	var result []model.Data
 	for _, id := range unitIDs {
 		result = append(result, model.Data{
@@ -36,5 +47,7 @@ func (r *redisRepository) GetLastData(ctx context.Context, unitIDs []int) ([]mod
 			},
 		})
 	}
+
+	r.logger.Debug("Returning mock result", slog.Int("result_count", len(result)))
 	return result, nil
 }

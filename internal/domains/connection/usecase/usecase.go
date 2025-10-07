@@ -2,7 +2,7 @@ package usecase
 
 import (
 	"context"
-	"log"
+	"log/slog"
 
 	"RealtimeService/internal/domains/connection/model"
 	"RealtimeService/internal/server/hub"
@@ -30,42 +30,50 @@ type connectionUseCase struct {
 	unitRepo  UnitRepository
 	redisRepo RedisRepository
 	hub       *hub.Hub
+	logger    *slog.Logger
 }
 
 func New(unitRepo UnitRepository, redisRepo RedisRepository, h *hub.Hub) ConnectionUseCase {
+	logger := slog.With(
+		slog.String("object", "connection"),
+		slog.String("layer", "UseCase"),
+	)
 	return &connectionUseCase{
 		unitRepo:  unitRepo,
 		redisRepo: redisRepo,
 		hub:       h,
+		logger:    logger,
 	}
 }
 
 func (uc *connectionUseCase) HandleConnection(ctx context.Context, userID int64, conn *websocket.Conn) error {
-	// Получаем unit_id
+	uc.logger.Info("HandleConnection started", slog.Int64("user_id", userID))
+
 	unitIDs, err := uc.unitRepo.GetUserUnits(ctx, userID)
 	if err != nil {
-		log.Println("unitRepo error:", err)
+		uc.logger.Error("Failed to get user units", slog.Int64("user_id", userID), slog.String("error", err.Error()))
 		return err
 	}
 	if len(unitIDs) == 0 {
-		log.Println("No units found for user:", userID)
+		uc.logger.Warn("No units found for user", slog.Int64("user_id", userID))
 		return nil
 	}
 
-	// Подписываемся в hub
+	uc.logger.Debug("Subscribing to units", slog.Int64("user_id", userID), slog.Any("unit_ids", unitIDs))
 	uc.hub.Subscribe(conn, unitIDs)
 	defer uc.hub.Unsubscribe(conn)
 
-	// Получаем последние данные
 	lastData, err := uc.redisRepo.GetLastData(ctx, unitIDs)
-	if err == nil && len(lastData) > 0 {
+	if err != nil {
+		uc.logger.Error("Failed to get last data from Redis", slog.String("error", err.Error()))
+	} else if len(lastData) > 0 {
 		_ = conn.WriteJSON(lastData)
+		uc.logger.Debug("Sent last data to client", slog.Int("count", len(lastData)))
 	}
 
-	// Держим соединение открытым
 	for {
 		if _, _, err := conn.ReadMessage(); err != nil {
-			log.Println("connection closed:", err)
+			uc.logger.Info("Connection closed", slog.Int64("user_id", userID), slog.String("error", err.Error()))
 			break
 		}
 	}
